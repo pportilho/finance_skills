@@ -146,6 +146,157 @@ install_plugin() {
   INSTALLED_PLUGINS[$plugin]=1
 }
 
+generate_guide() {
+  local target="$1"
+  local skills_dir="$target/.claude/skills"
+  local guide_path="$target/FINANCE_SKILLS.md"
+
+  python3 - "$skills_dir" "$guide_path" <<'PYEOF'
+import os, sys, re
+
+skills_dir = sys.argv[1]
+guide_path = sys.argv[2]
+
+PLUGIN_ORDER = [
+    ("core",               "Core — Mathematical Foundations"),
+    ("wealth-management",  "Wealth Management — Investment & Portfolio"),
+    ("compliance",         "Compliance — Regulatory Guidance"),
+    ("advisory-practice",  "Advisory Practice — Advisor Workflows"),
+    ("trading-operations", "Trading Operations — Order Lifecycle"),
+    ("client-operations",  "Client Operations — Account Servicing"),
+    ("data-integration",   "Data Integration — Reference & Market Data"),
+]
+
+def get_frontmatter_field(content, field):
+    if not content.startswith("---"):
+        return ""
+    end = content.find("---", 3)
+    if end < 0:
+        return ""
+    for line in content[3:end].splitlines():
+        if line.startswith(f"{field}:"):
+            return line.split(":", 1)[1].strip().strip("\"'")
+    return ""
+
+def get_when_to_use(content, n=4):
+    m = re.search(r"## When to Use\n((?:- .+\n?)+)", content)
+    if not m:
+        return []
+    return re.findall(r"- (.+)", m.group(1))[:n]
+
+# Collect skills, grouped by plugin
+plugin_skills = {}   # plugin_name -> [(skill_name, description, [when_items])]
+
+if not os.path.isdir(skills_dir):
+    sys.exit(0)
+
+for entry in sorted(os.listdir(skills_dir)):
+    skill_path = os.path.join(skills_dir, entry)
+    real_path  = os.path.realpath(skill_path)
+    if not os.path.isdir(real_path):
+        continue
+    skill_md = os.path.join(real_path, "SKILL.md")
+    if not os.path.isfile(skill_md):
+        continue
+
+    with open(skill_md, encoding="utf-8") as f:
+        content = f.read()
+
+    description = get_frontmatter_field(content, "description")
+    when_items  = get_when_to_use(content)
+
+    # Determine plugin from real path: .../plugins/<plugin>/skills/<skill>/
+    parts = real_path.replace("\\", "/").split("/")
+    plugin_name = "unknown"
+    for i, part in enumerate(parts):
+        if part == "skills" and i > 0:
+            plugin_name = parts[i - 1]
+            break
+
+    plugin_skills.setdefault(plugin_name, []).append((entry, description, when_items))
+
+total_skills   = sum(len(v) for v in plugin_skills.values())
+total_plugins  = len(plugin_skills)
+
+lines = []
+lines += [
+    "# Finance Skills — Reference Guide",
+    "",
+    "This project has Finance Skills installed. Each skill teaches Claude domain",
+    "knowledge about a specific area of financial services.",
+    "",
+    "Skills live in `.claude/skills/`. Claude Code reads them automatically",
+    "when you ask finance-related questions. Use natural language — the right",
+    "skill activates based on context.",
+    "",
+    f"**Installed:** {total_skills} skills across {total_plugins} plugin(s)",
+    "",
+    "---",
+    "",
+    "## For AI Assistants",
+    "",
+    "When working on this project with finance-related tasks:",
+    "",
+    "- **Before answering a quantitative question** (pricing, risk, returns,",
+    "  volatility), read the relevant `SKILL.md` — it contains formulas,",
+    "  worked examples, and common pitfalls.",
+    "- **Python scripts** are in `scripts/` inside each skill directory.",
+    "  They are standalone and importable:",
+    "  ```python",
+    "  from volatility_modeling import VolatilityModeling",
+    "  from forward_risk import ForwardRisk",
+    "  from return_calculations import ReturnCalculations",
+    "  ```",
+    "- **Compliance skills** cite specific rule numbers (FINRA, SEC, ERISA).",
+    "  Always reference the rule when flagging a compliance concern.",
+    "- **Cross-references** at the bottom of each SKILL.md point to related",
+    "  skills — follow them to build a complete picture.",
+    "- **Skill selection guide:** if unsure which skill applies, check the",
+    "  `## When to Use` section of candidate skills.",
+    "",
+    "---",
+    "",
+    "## Quick Reference",
+    "",
+    "| Skill | Description |",
+    "|-------|-------------|",
+]
+
+for plugin_key, _ in PLUGIN_ORDER:
+    for skill_name, desc, _ in plugin_skills.get(plugin_key, []):
+        short = (desc[:77] + "...") if len(desc) > 80 else desc
+        lines.append(f"| `{skill_name}` | {short} |")
+
+lines += ["", "---", "", "## Skills by Plugin", ""]
+
+for plugin_key, plugin_label in PLUGIN_ORDER:
+    skills = plugin_skills.get(plugin_key)
+    if not skills:
+        continue
+    lines += [f"### {plugin_label}", ""]
+    for skill_name, desc, when_items in skills:
+        lines += [f"#### `{skill_name}`", ""]
+        if desc:
+            lines += [desc, ""]
+        if when_items:
+            lines.append("**Use when:**")
+            for item in when_items:
+                lines.append(f"- {item}")
+            lines.append("")
+
+lines += [
+    "---",
+    "",
+    "_Generated by Finance Skills installer. Re-run `install.sh` to refresh._",
+]
+
+with open(guide_path, "w", encoding="utf-8") as f:
+    f.write("\n".join(lines) + "\n")
+
+print(f"  Guide: {guide_path}")
+PYEOF
+}
+
 # --- Parse arguments ---
 
 PLUGIN=""
@@ -215,5 +366,8 @@ else
   install_plugin "$PLUGIN" "$TARGET"
 fi
 
+generate_guide "$TARGET"
+
 echo ""
 echo "Done. Skills are available at $TARGET/.claude/skills/"
+echo "      Skills guide written to  $TARGET/FINANCE_SKILLS.md"
