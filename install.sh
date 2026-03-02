@@ -37,7 +37,7 @@ Usage: $0 --plugin <plugin-name> --target <path>
 
 Options:
   --plugin <name>   Plugin to install (or "all" to install everything)
-  --target <path>   Target project directory (must contain .claude/)
+  --target <path>   Target project directory (will create .claude/skills/ if needed)
   --list            List available plugins and exit
   --help            Show this help
 
@@ -134,7 +134,7 @@ install_plugin() {
         else
           ln -s "$skill_dir" "$link_path"
           echo "  Linked $skill_name"
-          ((count++))
+          count=$((count + 1))
         fi
       fi
     done
